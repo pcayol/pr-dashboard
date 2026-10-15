@@ -19,6 +19,7 @@ const SETTINGS_FILE = join(DATA, 'settings.json');
 const LEGACY_REPO = 'lefigaro/fff';
 const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
 
+const PR_STATES = ['open', 'closed'];
 const REPO_LIST_TTL_MS = 60 * 60 * 1000;
 
 const DEFAULT_SETTINGS = {
@@ -54,7 +55,9 @@ const SKILLS = {
 const FORBIDDEN_TOOLS = ['Edit', 'NotebookEdit', 'Bash(git push:*)', 'Bash(git commit:*)', 'Bash(gh pr comment:*)', 'Bash(gh pr review:*)', 'Bash(gh api:*)'];
 
 let settings = { ...DEFAULT_SETTINGS };
-let state = { me: null, prs: {}, local: {}, analyses: {}, fetchedAt: null, errors: {} };
+let state = { me: null, prs: {}, extra: {}, local: {}, analyses: {}, fetchedAt: null, errors: {} };
+const viewCache = new Map();
+const VIEW_TTL_MS = 60 * 1000;
 let generation = 0;
 let repoList = { at: 0, repos: null };
 const queue = [];
@@ -125,10 +128,12 @@ function saveState() {
   return saving;
 }
 
-const PR_QUERY = `query($q: String!) {
-  search(query: $q, type: ISSUE, first: 100) {
+const PAGE_SIZE = { open: 100, closed: 50 };
+
+const PR_QUERY = `query($q: String!, $first: Int!) {
+  search(query: $q, type: ISSUE, first: $first) {
     nodes { ... on PullRequest {
-      number title url isDraft createdAt updatedAt additions deletions changedFiles reviewDecision
+      number title url isDraft state mergedAt closedAt createdAt updatedAt additions deletions changedFiles reviewDecision
       author { login }
       headRefOid headRefName baseRefName
       labels(first: 20) { nodes { name color } }
@@ -168,6 +173,9 @@ function summarize(pr, me, repo) {
     url: pr.url,
     author: pr.author?.login,
     isDraft: pr.isDraft,
+    state: pr.state,
+    mergedAt: pr.mergedAt,
+    closedAt: pr.closedAt,
     isMine: pr.author?.login === me,
     createdAt: pr.createdAt,
     updatedAt: pr.updatedAt,
@@ -186,14 +194,46 @@ function summarize(pr, me, repo) {
   };
 }
 
-function searchQuery({ name, labels }) {
+function searchQuery({ name, labels, state: prState = 'open' }) {
   const filter = labels.length ? ` label:${labels.map((l) => JSON.stringify(l)).join(',')}` : '';
-  return `repo:${name} is:pr is:open${filter}`;
+  return `repo:${name} is:pr is:${prState}${filter} sort:updated-desc`;
 }
 
-async function fetchRepo(repo) {
-  const raw = await run('gh', ['api', 'graphql', '-f', `query=${PR_QUERY}`, '-f', `q=${searchQuery(repo)}`]);
-  return JSON.parse(raw).data.search.nodes.map((pr) => summarize(pr, state.me, repo.name));
+async function fetchRepo(repo, attempts = 3) {
+  const first = PAGE_SIZE[repo.state || 'open'];
+  try {
+    const raw = await run('gh', ['api', 'graphql', '-f', `query=${PR_QUERY}`, '-f', `q=${searchQuery(repo)}`, '-F', `first=${first}`]);
+    return JSON.parse(raw).data.search.nodes.map((pr) => summarize(pr, state.me, repo.name));
+  } catch (e) {
+    if (attempts <= 1) throw e;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    return fetchRepo(repo, attempts - 1);
+  }
+}
+
+function findPr(key) {
+  return state.prs[key] || state.extra[key];
+}
+
+async function viewPrs({ repo, label, prState }, { force = false } = {}) {
+  const repos = settings.repos.filter((r) => !repo || r.name === repo);
+  const specs = repos.map((r) => ({ name: r.name, labels: label === '*' ? [] : label ? [label] : r.labels, state: prState }));
+  const cacheKey = JSON.stringify(specs);
+  const cached = viewCache.get(cacheKey);
+  if (!force && cached && Date.now() - cached.at < VIEW_TTL_MS) return cached;
+
+  if (!state.me) state.me = (await run('gh', ['api', 'user', '-q', '.login'])).trim();
+  const results = await Promise.allSettled(specs.map((spec) => fetchRepo(spec)));
+  const prs = [];
+  const errors = {};
+  results.forEach((result, i) => {
+    if (result.status === 'rejected') errors[specs[i].name] = result.reason.message;
+    else prs.push(...result.value);
+  });
+  for (const pr of prs) if (!state.prs[pr.key]) state.extra[pr.key] = pr;
+  const entry = { at: Date.now(), fetchedAt: new Date().toISOString(), prs, errors };
+  if (Object.keys(errors).length === 0) viewCache.set(cacheKey, entry);
+  return entry;
 }
 
 async function refresh() {
@@ -204,7 +244,7 @@ async function refresh() {
     state.errors = { gh: e.message };
     return;
   }
-  const results = await Promise.allSettled(settings.repos.map(fetchRepo));
+  const results = await Promise.allSettled(settings.repos.map((repo) => fetchRepo(repo)));
   if (current !== generation) return;
 
   const prs = {};
@@ -229,7 +269,7 @@ async function refresh() {
 }
 
 function dropStaleJobs() {
-  const listed = new Set(Object.keys(state.prs));
+  const listed = new Set([...Object.keys(state.prs), ...Object.keys(state.extra)]);
   for (let i = queue.length - 1; i >= 0; i--) {
     const { key, kind } = queue[i];
     if (listed.has(key)) continue;
@@ -246,7 +286,7 @@ function jobFor(key, kind) {
 }
 
 function enqueue(key, kind, { force = false } = {}) {
-  const pr = state.prs[key];
+  const pr = findPr(key);
   if (!pr) return false;
   const job = jobFor(key, kind);
   if (job && job.sha === pr.headSha && !force && job.status !== 'error' && job.status !== 'interrupted') return false;
@@ -323,15 +363,15 @@ async function pump() {
   }
 }
 
-function view() {
+function view(list = { prs: Object.values(state.prs), fetchedAt: state.fetchedAt, errors: state.errors }) {
   const strip = (j) => j && { status: j.status, sha: j.sha, finishedAt: j.finishedAt, cost: j.cost, error: j.error, hasPrevious: !!j.previous };
   return {
     me: state.me,
     settings,
-    fetchedAt: state.fetchedAt,
-    errors: state.errors,
+    fetchedAt: list.fetchedAt,
+    errors: list.errors,
     queue: [running, ...queue].filter(Boolean).map(({ repo, n, kind }) => ({ repo, n, kind })),
-    prs: Object.values(state.prs).map((pr) => {
+    prs: list.prs.map((pr) => {
       const a = state.analyses[pr.key] || {};
       return { ...pr, local: state.local[pr.key] || {}, brief: strip(a.brief), deep: strip(a.deep) };
     }),
@@ -401,10 +441,19 @@ const server = createServer(async (req, res) => {
       if (relative(join(ROOT, 'public'), file).startsWith('..') || !existsSync(file)) return send(res, 404, 'Not found', 'text/plain');
       return send(res, 200, await readFile(file), MIME[extname(file)] || 'application/octet-stream');
     }
-    if (req.method === 'GET' && parts[1] === 'prs' && parts.length === 2) return send(res, 200, view());
-    if (req.method === 'POST' && parts[1] === 'refresh') {
-      await refresh();
-      return send(res, 200, view());
+    if (parts[1] === 'prs' && parts.length === 2 || parts[1] === 'refresh') {
+      const repo = url.searchParams.get('repo') || null;
+      const label = url.searchParams.get('label') || null;
+      const prState = url.searchParams.get('state') || 'open';
+      if (repo && !settings.repos.some((r) => r.name === repo)) return send(res, 400, { error: `repo not followed: ${repo}` });
+      if (!PR_STATES.includes(prState)) return send(res, 400, { error: `state must be one of ${PR_STATES.join(', ')}` });
+      const force = req.method === 'POST' && parts[1] === 'refresh';
+      if (force) {
+        viewCache.clear();
+        await refresh();
+      }
+      if (!repo && !label && prState === 'open') return send(res, 200, view());
+      return send(res, 200, view(await viewPrs({ repo, label, prState })));
     }
     if (parts[1] === 'settings') {
       if (req.method === 'GET') return send(res, 200, settings);
@@ -417,6 +466,7 @@ const server = createServer(async (req, res) => {
         }
         settings = next;
         await writeJson(SETTINGS_FILE, settings);
+        viewCache.clear();
         await refresh();
         return send(res, 200, view());
       }
@@ -425,7 +475,7 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && parts[1] === 'repos') return send(res, 200, await listRepos({ force: url.searchParams.has('force') }));
     const key = parts[1] === 'prs' && parts.length >= 6 ? keyOf(`${parts[2]}/${parts[3]}`, parts[4]) : null;
     const action = parts[5];
-    if (key && state.prs[key]) {
+    if (key && findPr(key)) {
       if (req.method === 'POST' && action === 'local') {
         const patch = await readBody(req);
         state.local[key] = { ...(state.local[key] || {}), ...patch };

@@ -34,7 +34,13 @@ Au premier lancement, les **Réglages** s'ouvrent :
 - **Labels, par repo.** Une PR est listée si elle porte au moins un des labels cochés. Aucun label coché : toutes les PR ouvertes du repo.
 - **Brief automatique**, activable ou non.
 
-Quand plusieurs repos ou plusieurs labels sont suivis, des filtres apparaissent au-dessus de la liste.
+En haut de l'écran, trois sélecteurs changent la vue sans toucher aux réglages :
+
+- **Repo** : tous les repos suivis, ou un seul.
+- **Label** : les labels suivis, toutes les PR, ou n'importe quel label du repo choisi.
+- **État** : ouvertes ou fermées. Les fermées sont triées en mergées et fermées sans merge, 50 par repo au plus.
+
+La vue choisie est gardée d'une ouverture à l'autre. Le brief automatique ne porte que sur la vue par défaut : PR ouvertes avec les labels suivis.
 
 ## Coûts observés
 
