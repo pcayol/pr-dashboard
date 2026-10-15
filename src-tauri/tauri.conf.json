@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "PR Dashboard",
+  "version": "0.1.0",
+  "identifier": "fr.lefigaro.pr-dashboard",
+  "build": {
+    "frontendDist": "loading",
+    "beforeBuildCommand": "npm run prepare:node"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns"
+    ],
+    "externalBin": [
+      "binaries/node"
+    ],
+    "resources": {
+      "../server.js": "server/server.js",
+      "../package.json": "server/package.json",
+      "../public/": "server/public/",
+      "../claude-plugin/": "server/claude-plugin/"
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}

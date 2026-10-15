@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>PR Dynamization</title>
+<style>
+  :root { --bg: #f6f6f3; --ink: #6b6e73; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141517; --ink: #9a9ca1; } }
+  html, body { height: 100%; margin: 0; }
+  body { display: grid; place-items: center; background: var(--bg); color: var(--ink); font: 14px system-ui, sans-serif; }
+</style>
+</head>
+<body>Démarrage du serveur…
+<script>
+  const target = 'http://localhost:4300/';
+  const tryOpen = () => fetch(`${target}api/prs`, { mode: 'no-cors' })
+    .then(() => location.replace(target))
+    .catch(() => setTimeout(tryOpen, 300));
+  tryOpen();
+</script>
+</body>
+</html>

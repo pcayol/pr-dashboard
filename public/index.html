@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PR Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f6f3;
+    --panel: #ffffff;
+    --ink: #1c1d1f;
+    --muted: #6b6e73;
+    --line: #e4e3de;
+    --hover: #f0efea;
+    --active: #e9eefc;
+    --accent: #2f5bd8;
+    --red: #c4372b;
+    --red-bg: #fbe9e6;
+    --amber: #a36200;
+    --amber-bg: #fdf1dc;
+    --green: #1f7a46;
+    --green-bg: #e3f3e8;
+    --blue-bg: #e7edfc;
+    --grey-bg: #ecebe6;
+    --code-bg: #f1f0eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141517;
+      --panel: #1b1c1f;
+      --ink: #e7e6e2;
+      --muted: #9a9ca1;
+      --line: #2c2d31;
+      --hover: #232428;
+      --active: #222b44;
+      --accent: #7c9bff;
+      --red: #ff8a7d;
+      --red-bg: #3a1f1c;
+      --amber: #f0b45c;
+      --amber-bg: #352a17;
+      --green: #6fd39a;
+      --green-bg: #17301f;
+      --blue-bg: #1f2945;
+      --grey-bg: #26272b;
+      --code-bg: #24252a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--ink); font: 14px/1.5 Inter, system-ui, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  button, select, textarea { font: inherit; color: inherit; }
+  button {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 11px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: var(--hover); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+
+  .app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; }
+  header .meta { color: var(--muted); font-size: 13px; }
+  header .spacer { flex: 1; }
+  header label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; cursor: pointer; }
+  .queue { font-size: 13px; color: var(--amber); }
+  .error { color: var(--red); font-size: 13px; }
+
+  main { display: grid; grid-template-columns: minmax(360px, 34%) 1fr; min-height: 0; }
+  .list { overflow: auto; border-right: 1px solid var(--line); background: var(--panel); }
+  .group h2 {
+    position: sticky; top: 0; z-index: 1; margin: 0; padding: 10px 16px 6px;
+    font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--muted); background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  .row { display: block; width: 100%; text-align: left; border: 0; border-radius: 0; border-bottom: 1px solid var(--line); padding: 10px 16px; background: transparent; }
+  .row:hover { background: var(--hover); }
+  .row.selected { background: var(--active); }
+  .row .top { display: flex; gap: 8px; align-items: baseline; }
+  .row .num { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
+  .row .title { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .row .title.unseen::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: middle; }
+  .row .sub { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 10px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+  .b-red { background: var(--red-bg); color: var(--red); }
+  .b-amber { background: var(--amber-bg); color: var(--amber); }
+  .b-green { background: var(--green-bg); color: var(--green); }
+  .b-blue { background: var(--blue-bg); color: var(--accent); }
+  .b-grey { background: var(--grey-bg); color: var(--muted); }
+
+  .detail { overflow: auto; padding: 24px 32px 64px; }
+  .detail .empty { color: var(--muted); margin-top: 40px; text-align: center; }
+  .list .empty { color: var(--muted); margin: 0; }
+  .detail h2 { margin: 0 0 6px; font-size: 20px; line-height: 1.3; }
+  .detail .info { color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 12px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 16px 0; }
+  .toolbar select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+  textarea.note { width: 100%; min-height: 60px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); resize: vertical; }
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-top: 20px; }
+  .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 8px 14px; color: var(--muted); }
+  .tabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 500; }
+  .tabmeta { display: flex; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); margin: 12px 0; flex-wrap: wrap; }
+  .notice { padding: 10px 12px; border-radius: 6px; background: var(--amber-bg); color: var(--amber); font-size: 13px; margin: 12px 0; }
+  .notice.err { background: var(--red-bg); color: var(--red); white-space: pre-wrap; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+
+  .md { max-width: 900px; }
+  .md h1, .md h2, .md h3 { line-height: 1.3; margin: 1.4em 0 .5em; }
+  .md h1 { font-size: 19px; } .md h2 { font-size: 17px; } .md h3 { font-size: 15px; }
+  .md code { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  .md pre { background: var(--code-bg); padding: 12px; border-radius: 6px; overflow: auto; }
+  .md pre code { background: none; padding: 0; }
+  .md table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 12px 0; display: block; overflow-x: auto; }
+  .md th, .md td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+  .md th { background: var(--hover); }
+  .md li { margin: 3px 0; }
+
+  .label { display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border: 1px solid var(--line); border-radius: 10px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .label i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  .filters button { padding: 2px 9px; border-radius: 12px; font-size: 12px; }
+  .filters button.on { background: var(--active); border-color: var(--accent); color: var(--accent); }
+
+  .overlay { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 16px; background: rgb(0 0 0 / .35); }
+  .dialog { width: min(560px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 40px rgb(0 0 0 / .25); }
+  .dialog h2 { margin: 0; padding: 16px 20px; font-size: 16px; border-bottom: 1px solid var(--line); }
+  .dialog .body { padding: 16px 20px; overflow: auto; display: grid; gap: 16px; }
+  .dialog .foot { padding: 12px 20px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
+  .field { display: grid; gap: 6px; }
+  .field > span { font-weight: 500; }
+  .field small { color: var(--muted); }
+  .field input[type=text] { padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); font: inherit; color: inherit; }
+  .labels { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+  .labels label { display: flex; gap: 8px; align-items: center; padding: 5px 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .labels label:last-child { border-bottom: 0; }
+  .labels label:hover { background: var(--hover); }
+  .labels .desc { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: right; }
+  .check { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+
+  @media (max-width: 800px) {
+    main { grid-template-columns: 1fr; }
+    .list { max-height: 45vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    .detail { padding: 16px; }
+    header { flex-wrap: wrap; padding: 12px 16px; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script type="importmap">
+{ "imports": {
+  "preact": "https://cdn.jsdelivr.net/npm/preact@10.22.1/dist/preact.module.js",
+  "preact/hooks": "https://cdn.jsdelivr.net/npm/preact@10.22.1/hooks/dist/hooks.module.js",
+  "htm": "https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.module.js"
+} }
+</script>
+<script type="module">
+import { h, render } from 'preact';
+import { useState, useEffect, useMemo, useCallback } from 'preact/hooks';
+import htm from 'htm';
+
+const html = htm.bind(h);
+
+const STATUSES = { '': 'Pas de statut', todo: 'À faire', doing: 'En cours', ok: 'OK pour moi', blocked: 'Bloqué' };
+const KIND_LABEL = { brief: 'Brief', deep: 'Deep review' };
+
+const api = {
+  list: () => fetch('/api/prs').then((r) => r.json()),
+  refresh: () => fetch('/api/refresh', { method: 'POST' }).then((r) => r.json()),
+  local: (n, patch) => fetch(`/api/prs/${n}/local`, { method: 'POST', body: JSON.stringify(patch) }).then((r) => r.json()),
+  launch: (n, kind, force) => fetch(`/api/prs/${n}/${kind}${force ? '?force' : ''}`, { method: 'POST' }).then((r) => r.json()),
+  analysis: (n, kind) => fetch(`/api/prs/${n}/${kind}`).then((r) => (r.ok ? r.json() : null)),
+  labels: (repo) => fetch(`/api/labels?repo=${encodeURIComponent(repo)}`).then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json()).error)))),
+  saveSettings: (settings) => fetch('/api/settings', { method: 'POST', body: JSON.stringify(settings) }).then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json()).error)))),
+};
+
+function Label({ label }) {
+  return html`<span class="label"><i style=${{ background: `#${label.color}` }}></i>${label.name}</span>`;
+}
+
+function ago(iso) {
+  if (!iso) return '';
+  const s = (Date.now() - new Date(iso)) / 1000;
+  if (s < 60) return "à l'instant";
+  if (s < 3600) return `il y a ${Math.round(s / 60)} min`;
+  if (s < 86400) return `il y a ${Math.round(s / 3600)} h`;
+  return `il y a ${Math.round(s / 86400)} j`;
+}
+
+function priority(pr) {
+  if (pr.isDraft) return 'drafts';
+  if (pr.isMine) return 'mine';
+  if (pr.local.status === 'ok' && pr.myReview.status !== 'outdated' && !pr.repliesToMe) return 'done';
+  if (pr.repliesToMe || pr.myReview.status === 'never' || pr.myReview.status === 'outdated') return 'todo';
+  return 'done';
+}
+
+function score(pr) {
+  let s = 0;
+  if (pr.repliesToMe) s += 1000;
+  if (pr.requested) s += 500;
+  if (pr.myReview.status === 'outdated') s += 300;
+  if (pr.myReview.status === 'never') s += 200;
+  if (isUnseen(pr)) s += 100;
+  return s - new Date(pr.updatedAt).getTime() / 1e13;
+}
+
+function isUnseen(pr) {
+  return !pr.local.seenAt || pr.updatedAt > pr.local.seenAt;
+}
+
+function ReviewBadge({ pr }) {
+  const r = pr.myReview;
+  if (r.status === 'never') return html`<span class="badge b-red">Jamais vue</span>`;
+  if (r.status === 'outdated') return html`<span class="badge b-amber">Commits depuis ta review</span>`;
+  const label = r.state === 'APPROVED' ? 'Approuvée' : r.state === 'CHANGES_REQUESTED' ? 'Changes demandés' : 'Review à jour';
+  return html`<span class="badge b-green">${label}</span>`;
+}
+
+function JobBadge({ job, kind }) {
+  if (!job) return null;
+  const map = {
+    queued: ['b-grey', 'en file'],
+    running: ['b-amber', 'en cours…'],
+    done: ['b-blue', 'prêt'],
+    error: ['b-red', 'erreur'],
+    interrupted: ['b-red', 'interrompu'],
+  };
+  const [cls, label] = map[job.status] || ['b-grey', job.status];
+  return html`<span class="badge ${cls}">${KIND_LABEL[kind]} ${label}</span>`;
+}
+
+function Row({ pr, selected, onSelect, showLabels }) {
+  const briefUnread = pr.brief?.status === 'done' && pr.local.briefReadSha !== pr.brief.sha;
+  return html`
+    <button class="row ${selected ? 'selected' : ''}" onClick=${() => onSelect(pr.number)}>
+      <div class="top">
+        <span class="num">#${pr.number}</span>
+        <span class="title ${isUnseen(pr) ? 'unseen' : ''}">${pr.title}</span>
+      </div>
+      <div class="sub">
+        <span>${pr.author}</span>
+        ${showLabels && pr.labels.map((l) => html`<${Label} key=${l.name} label=${l} />`)}
+        ${!pr.isDraft && !pr.isMine && html`<${ReviewBadge} pr=${pr} />`}
+        ${pr.repliesToMe > 0 && html`<span class="badge b-red">${pr.repliesToMe} réponse${pr.repliesToMe > 1 ? 's' : ''} à toi</span>`}
+        ${pr.requested && html`<span class="badge b-blue">Review demandée</span>`}
+        ${pr.local.status && html`<span class="badge b-grey">${STATUSES[pr.local.status]}</span>`}
+        ${briefUnread && html`<span class="badge b-blue">Brief non lu</span>`}
+        ${pr.brief && pr.brief.status !== 'done' && html`<${JobBadge} job=${pr.brief} kind="brief" />`}
+        ${pr.deep && html`<${JobBadge} job=${pr.deep} kind="deep" />`}
+      </div>
+    </button>`;
+}
+
+function githubLinks(markdown, repo, sha) {
+  const renderer = new marked.Renderer();
+  const base = renderer.link.bind(renderer);
+  renderer.link = (href, title, text) => {
+    if (href && !/^[a-z]+:|^#/i.test(href)) {
+      const m = href.match(/^(.*?)(?::(\d+))?$/);
+      href = `https://github.com/${repo}/blob/${sha}/${m[1].replace(/^\.?\//, '')}${m[2] ? `#L${m[2]}` : ''}`;
+    }
+    return base(href, title, text).replace('<a ', '<a target="_blank" rel="noopener" ');
+  };
+  return DOMPurify.sanitize(marked.parse(markdown, { renderer, gfm: true }), { ADD_ATTR: ['target'] });
+}
+
+function Analysis({ pr, kind, repo, onLaunch }) {
+  const job = pr[kind];
+  const [doc, setDoc] = useState(null);
+  const key = `${pr.number}-${kind}-${job?.status}-${job?.finishedAt}`;
+
+  useEffect(() => {
+    setDoc(null);
+    if (job?.status === 'done' || job?.hasPrevious) api.analysis(pr.number, kind).then(setDoc);
+  }, [key]);
+
+  const busy = job && (job.status === 'queued' || job.status === 'running');
+  const stale = doc && doc.sha !== pr.headSha;
+
+  return html`
+    <div>
+      <div class="tabmeta">
+        ${doc && html`<span>Analyse du commit <code>${doc.sha.slice(0, 7)}</code>, ${ago(doc.finishedAt)}</span>`}
+        ${doc?.cost != null && html`<span>· ${doc.cost.toFixed(2)} $</span>`}
+        ${busy && html`<${JobBadge} job=${job} kind=${kind} />`}
+        <span style="flex:1"></span>
+        ${!busy && html`<button class=${!job ? 'primary' : ''} onClick=${() => onLaunch(kind, !!job)}>
+          ${job ? 'Relancer' : `Lancer la ${KIND_LABEL[kind].toLowerCase()}`}
+        </button>`}
+      </div>
+      ${stale && html`<div class="notice">La PR a reçu des commits depuis cette analyse.</div>`}
+      ${(job?.status === 'error' || job?.status === 'interrupted') && html`<div class="notice err">${job.error || 'Analyse interrompue par un redémarrage du serveur.'}</div>`}
+      ${!job && kind === 'brief' && pr.isDraft && html`<p class="empty">Draft : pas d'analyse automatique.</p>`}
+      ${!job && kind === 'deep' && html`<p class="empty">La deep review se lance à la demande. Elle prend plusieurs minutes.</p>`}
+      ${doc && html`<div class="md" dangerouslySetInnerHTML=${{ __html: githubLinks(doc.markdown, repo, doc.sha) }}></div>`}
+    </div>`;
+}
+
+function Detail({ pr, repo, onLocal, onLaunch }) {
+  const [tab, setTab] = useState('brief');
+  const [note, setNote] = useState(pr.local.note || '');
+
+  useEffect(() => {
+    setNote(pr.local.note || '');
+    if (isUnseen(pr)) onLocal(pr.number, { seenAt: new Date().toISOString() });
+  }, [pr.number]);
+
+  const briefUnread = pr.brief?.status === 'done' && pr.local.briefReadSha !== pr.brief.sha;
+
+  return html`
+    <div>
+      <h2><a href=${pr.url} target="_blank" rel="noopener">#${pr.number}</a> ${pr.title}</h2>
+      <div class="info">
+        <span>${pr.author}</span>
+        <span>+${pr.size.additions} −${pr.size.deletions} · ${pr.size.files} fichiers</span>
+        <span>Dernier commit ${ago(pr.lastCommitAt)}</span>
+        ${pr.myReview.at && html`<span>Ta dernière review ${ago(pr.myReview.at)}</span>`}
+        ${pr.openThreads > 0 && html`<span>${pr.openThreads} thread${pr.openThreads > 1 ? 's' : ''} ouvert${pr.openThreads > 1 ? 's' : ''}</span>`}
+        ${pr.newComments > 0 && html`<span>${pr.newComments} commentaire${pr.newComments > 1 ? 's' : ''} depuis ta review</span>`}
+      </div>
+      <div class="toolbar">
+        ${!pr.isDraft && !pr.isMine && html`<${ReviewBadge} pr=${pr} />`}
+        <select value=${pr.local.status || ''} onChange=${(e) => onLocal(pr.number, { status: e.target.value })}>
+          ${Object.entries(STATUSES).map(([v, l]) => html`<option value=${v}>${l}</option>`)}
+        </select>
+        ${briefUnread && html`<button onClick=${() => onLocal(pr.number, { briefReadSha: pr.brief.sha })}>Marquer le brief comme lu</button>`}
+        <a href=${`${pr.url}/files`} target="_blank" rel="noopener">Voir les fichiers sur GitHub</a>
+      </div>
+      <textarea class="note" placeholder="Note perso…" value=${note}
+        onInput=${(e) => setNote(e.target.value)}
+        onBlur=${() => note !== (pr.local.note || '') && onLocal(pr.number, { note })}></textarea>
+      <div class="tabs">
+        ${['brief', 'deep'].map((k) => html`<button class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${KIND_LABEL[k]}</button>`)}
+      </div>
+      <${Analysis} key=${`${pr.number}-${tab}`} pr=${pr} kind=${tab} repo=${repo} onLaunch=${(kind, force) => onLaunch(pr.number, kind, force)} />
+    </div>`;
+}
+
+function Settings({ current, onClose, onSaved }) {
+  const [repo, setRepo] = useState(current.repo);
+  const [repoDraft, setRepoDraft] = useState(current.repo);
+  const [labels, setLabels] = useState(new Set(current.labels));
+  const [autoBrief, setAutoBrief] = useState(current.autoBrief);
+  const [available, setAvailable] = useState(null);
+  const [query, setQuery] = useState('');
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setAvailable(null);
+    setError(null);
+    api.labels(repo).then(setAvailable).catch((e) => setError(e.message));
+  }, [repo]);
+
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  const toggle = (name) => setLabels((prev) => {
+    const next = new Set(prev);
+    next.has(name) ? next.delete(name) : next.add(name);
+    return next;
+  });
+
+  const shown = (available || []).filter((l) => l.name.toLowerCase().includes(query.toLowerCase()));
+  const sorted = [...shown.filter((l) => labels.has(l.name)), ...shown.filter((l) => !labels.has(l.name))];
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      onSaved(await api.saveSettings({ repo, labels: [...labels], autoBrief }));
+    } catch (e) {
+      setError(e.message);
+      setSaving(false);
+    }
+  };
+
+  return html`
+    <div class="overlay" onClick=${(e) => e.target === e.currentTarget && onClose()}>
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="Réglages">
+        <h2>Réglages</h2>
+        <div class="body">
+          <label class="field">
+            <span>Repo GitHub</span>
+            <input type="text" value=${repoDraft} placeholder="owner/name"
+              onInput=${(e) => setRepoDraft(e.target.value)}
+              onBlur=${() => repoDraft.trim() !== repo && setRepo(repoDraft.trim())}
+              onKeyDown=${(e) => e.key === 'Enter' && setRepo(repoDraft.trim())} />
+          </label>
+          <div class="field">
+            <span>Labels suivis · ${labels.size}</span>
+            <small>Une PR est listée si elle porte au moins un de ces labels. Aucun label coché : toutes les PR ouvertes.</small>
+            <input type="text" placeholder="Filtrer les labels…" value=${query} onInput=${(e) => setQuery(e.target.value)} />
+            <div class="labels">
+              ${!available && !error && html`<label>Chargement des labels…</label>`}
+              ${sorted.map((l) => html`
+                <label key=${l.name}>
+                  <input type="checkbox" checked=${labels.has(l.name)} onChange=${() => toggle(l.name)} />
+                  <${Label} label=${l} />
+                  <span class="desc">${l.description}</span>
+                </label>`)}
+            </div>
+          </div>
+          <label class="check">
+            <input type="checkbox" checked=${autoBrief} onChange=${(e) => setAutoBrief(e.target.checked)} />
+            Lancer le brief automatiquement sur chaque PR, hors drafts et hors des miennes
+          </label>
+          ${error && html`<div class="notice err">${error}</div>`}
+        </div>
+        <div class="foot">
+          <button onClick=${onClose}>Annuler</button>
+          <button class="primary" onClick=${save} disabled=${saving || !available}>${saving ? 'Enregistrement…' : 'Enregistrer'}</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+const GROUPS = [
+  ['todo', 'À voir'],
+  ['done', 'À jour'],
+  ['drafts', 'Drafts'],
+  ['mine', 'Mes PR'],
+];
+
+function App() {
+  const [data, setData] = useState(null);
+  const [selected, setSelected] = useState(() => Number(location.hash.slice(1)) || null);
+  const [showMine, setShowMine] = useState(false);
+  const [showDrafts, setShowDrafts] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [labelFilter, setLabelFilter] = useState(null);
+
+  const load = useCallback(() => api.list().then(setData).catch(() => {}), []);
+
+  useEffect(() => {
+    load();
+    const busy = data?.queue?.length > 0;
+    const t = setInterval(load, busy ? 5000 : 30000);
+    return () => clearInterval(t);
+  }, [data?.queue?.length]);
+
+  useEffect(() => { if (selected) history.replaceState(null, '', `#${selected}`); }, [selected]);
+
+  const groups = useMemo(() => {
+    if (!data) return [];
+    const by = {};
+    const prs = labelFilter ? data.prs.filter((pr) => pr.labels.some((l) => l.name === labelFilter)) : data.prs;
+    for (const pr of prs) (by[priority(pr)] ??= []).push(pr);
+    return GROUPS
+      .filter(([k]) => (k !== 'mine' || showMine) && (k !== 'drafts' || showDrafts))
+      .map(([k, label]) => [k, label, (by[k] || []).sort((a, b) => score(b) - score(a))])
+      .filter(([, , list]) => list.length);
+  }, [data, showMine, showDrafts, labelFilter]);
+
+  const followed = data?.settings.labels || [];
+  useEffect(() => { if (labelFilter && !followed.includes(labelFilter)) setLabelFilter(null); }, [followed.join()]);
+
+  const onLocal = async (n, patch) => {
+    await api.local(n, patch);
+    load();
+  };
+  const onLaunch = async (n, kind, force) => {
+    await api.launch(n, kind, force);
+    load();
+  };
+  const onRefresh = async () => {
+    setRefreshing(true);
+    setData(await api.refresh());
+    setRefreshing(false);
+  };
+
+  const current = data?.prs.find((p) => p.number === selected);
+  const todoCount = groups.find(([k]) => k === 'todo')?.[2].length || 0;
+
+  useEffect(() => { document.title = todoCount ? `(${todoCount}) PR Dashboard` : 'PR Dashboard'; }, [todoCount]);
+
+  return html`
+    <div class="app">
+      <header>
+        <h1>${data?.settings.repo || 'PR Dashboard'}</h1>
+        <span class="meta">${data?.prs.length ?? '…'} ouvertes · ${todoCount} à voir · mis à jour ${ago(data?.fetchedAt)}</span>
+        ${data?.queue.length > 0 && html`<span class="queue">${data.queue.length} analyse${data.queue.length > 1 ? 's' : ''} en file (#${data.queue[0].n} ${KIND_LABEL[data.queue[0].kind].toLowerCase()} en cours)</span>`}
+        ${data?.error && html`<span class="error">${data.error}</span>`}
+        <span class="spacer"></span>
+        <label><input type="checkbox" checked=${showDrafts} onChange=${(e) => setShowDrafts(e.target.checked)} /> Drafts</label>
+        <label><input type="checkbox" checked=${showMine} onChange=${(e) => setShowMine(e.target.checked)} /> Mes PR</label>
+        <button onClick=${onRefresh} disabled=${refreshing}>${refreshing ? 'Rafraîchissement…' : 'Rafraîchir'}</button>
+        <button onClick=${() => setSettingsOpen(true)} disabled=${!data}>Réglages</button>
+      </header>
+      ${settingsOpen && html`<${Settings} current=${data.settings} onClose=${() => setSettingsOpen(false)}
+        onSaved=${(next) => { setData(next); setSettingsOpen(false); }} />`}
+      <main>
+        <div class="list">
+          ${followed.length > 1 && html`
+            <div class="filters">
+              <button class=${!labelFilter ? 'on' : ''} onClick=${() => setLabelFilter(null)}>Tous les labels</button>
+              ${followed.map((l) => html`<button key=${l} class=${labelFilter === l ? 'on' : ''} onClick=${() => setLabelFilter(l)}>${l}</button>`)}
+            </div>`}
+          ${data && followed.length === 0 && html`<div class="filters"><span class="label">Toutes les PR ouvertes</span></div>`}
+          ${data && groups.length === 0 && html`<p class="empty" style="padding: 24px 16px">Aucune PR ouverte pour ces labels.</p>`}
+          ${groups.map(([k, label, list]) => html`
+            <section class="group" key=${k}>
+              <h2>${label} · ${list.length}</h2>
+              ${list.map((pr) => html`<${Row} key=${pr.number} pr=${pr} selected=${pr.number === selected} onSelect=${setSelected} showLabels=${followed.length !== 1} />`)}
+            </section>`)}
+        </div>
+        <div class="detail">
+          ${current
+            ? html`<${Detail} key=${current.number} pr=${current} repo=${data.settings.repo} onLocal=${onLocal} onLaunch=${onLaunch} />`
+            : html`<p class="empty">${data ? 'Choisis une PR dans la liste.' : 'Chargement…'}</p>`}
+        </div>
+      </main>
+    </div>`;
+}
+
+if (window.__PR_DASHBOARD_APP__) {
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('a[href]');
+    if (a && a.origin !== location.origin) {
+      e.preventDefault();
+      location.href = a.href;
+    }
+  });
+}
+
+render(html`<${App} />`, document.getElementById('app'));
+</script>
+</body>
+</html>

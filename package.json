@@ -1,0 +1,23 @@
+{
+  "name": "pr-dashboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "prepare:node": "node scripts/prepare-node.mjs",
+    "sync:skills": "scripts/sync-skills.sh",
+    "icons": "scripts/make-icons.sh",
+    "app:build": "tauri build --bundles app",
+    "app:install": "scripts/install-app.sh",
+    "launchd:install": "scripts/install-launchd.sh",
+    "launchd:uninstall": "scripts/install-launchd.sh --uninstall"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.3"
+  },
+  "version": "0.1.0",
+  "description": "Local dashboard of the GitHub pull requests to review, with headless Claude briefs and deep reviews",
+  "engines": {
+    "node": ">=20"
+  }
+}
