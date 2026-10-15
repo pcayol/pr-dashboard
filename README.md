@@ -1,8 +1,8 @@
 # PR Dashboard
 
-App macOS locale pour suivre les pull requests à review sur un repo GitHub.
+App macOS locale pour suivre les pull requests à review sur plusieurs repos GitHub.
 
-Elle liste les PR ouvertes qui portent les labels choisis. Pour chacune, elle montre où tu en es : jamais vue, commits depuis ta review, réponses à tes commentaires. Elle lance aussi deux skills Claude en headless :
+Elle liste les PR ouvertes des repos choisis, filtrées par label si besoin. Pour chacune, elle montre où tu en es : jamais vue, commits depuis ta review, réponses à tes commentaires. Elle lance aussi deux skills Claude en headless :
 
 - `pr-brief`, automatiquement sur chaque PR hors draft et hors des tiennes ;
 - `deep-review`, sur un clic.
@@ -28,13 +28,13 @@ L'app est compilée puis copiée dans `/Applications/PR Dashboard.app`.
 
 ## Utiliser
 
-Au premier lancement, ouvre **Réglages** :
+Au premier lancement, les **Réglages** s'ouvrent :
 
-- le repo GitHub, au format `owner/name` ;
-- les labels suivis. Une PR est listée si elle porte au moins un de ces labels. Aucun label coché : toutes les PR ouvertes ;
-- le brief automatique, activable ou non.
+- **Repos suivis.** La recherche propose les repos de tes organisations GitHub et les tiens, tels que `gh` les voit. Un `owner/name` tapé à la main marche aussi.
+- **Labels, par repo.** Une PR est listée si elle porte au moins un des labels cochés. Aucun label coché : toutes les PR ouvertes du repo.
+- **Brief automatique**, activable ou non.
 
-Quand plusieurs labels sont suivis, des filtres apparaissent au-dessus de la liste.
+Quand plusieurs repos ou plusieurs labels sont suivis, des filtres apparaissent au-dessus de la liste.
 
 ## Coûts observés
 
@@ -49,7 +49,7 @@ Un brief n'est relancé que quand la PR reçoit de nouveaux commits.
   - `data/settings.json` : les réglages.
   - `data/state.json` : ton suivi local et l'index des analyses.
   - `data/analyses/` : les briefs et deep reviews en markdown.
-  - `repos/` : un clone par repo suivi. Les analyses tournent dans un `git worktree` de ce clone, jamais dans ton checkout.
+  - `repos/` : un clone par repo suivi, créé au premier brief. Les analyses tournent dans un `git worktree` de ce clone, jamais dans ton checkout.
 - **Skills** : `claude-plugin/skills/`. Ce sont des copies de `~/.claude/skills`. Après une modification de tes skills, `npm run sync:skills` puis `npm run app:install`.
 
 ## Garde-fous des analyses

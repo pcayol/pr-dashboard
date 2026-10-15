@@ -19,9 +19,10 @@ const SETTINGS_FILE = join(DATA, 'settings.json');
 const LEGACY_REPO = 'lefigaro/fff';
 const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
 
+const REPO_LIST_TTL_MS = 60 * 60 * 1000;
+
 const DEFAULT_SETTINGS = {
-  repo: process.env.PR_DASHBOARD_REPO || LEGACY_REPO,
-  labels: ['dynamization'],
+  repos: process.env.PR_DASHBOARD_REPO ? [{ name: process.env.PR_DASHBOARD_REPO, labels: [] }] : [],
   autoBrief: !process.env.PR_DASHBOARD_NO_AUTO,
 };
 
@@ -53,7 +54,9 @@ const SKILLS = {
 const FORBIDDEN_TOOLS = ['Edit', 'NotebookEdit', 'Bash(git push:*)', 'Bash(git commit:*)', 'Bash(gh pr comment:*)', 'Bash(gh pr review:*)', 'Bash(gh api:*)'];
 
 let settings = { ...DEFAULT_SETTINGS };
-let state = { me: null, prs: {}, local: {}, analyses: {}, fetchedAt: null, error: null };
+let state = { me: null, prs: {}, local: {}, analyses: {}, fetchedAt: null, errors: {} };
+let generation = 0;
+let repoList = { at: 0, repos: null };
 const queue = [];
 let running = null;
 const children = new Set();
@@ -90,9 +93,15 @@ function migrateLegacy(saved) {
   return { local: rekey(saved.local), analyses };
 }
 
+function normalizeSettings(raw) {
+  const { repo, labels, ...rest } = raw;
+  const repos = rest.repos || (repo ? [{ name: repo, labels: labels || [] }] : DEFAULT_SETTINGS.repos);
+  return { ...DEFAULT_SETTINGS, ...rest, repos };
+}
+
 async function loadState() {
   await mkdir(DATA, { recursive: true });
-  if (existsSync(SETTINGS_FILE)) settings = { ...DEFAULT_SETTINGS, ...JSON.parse(await readFile(SETTINGS_FILE, 'utf8')) };
+  if (existsSync(SETTINGS_FILE)) settings = normalizeSettings(JSON.parse(await readFile(SETTINGS_FILE, 'utf8')));
   if (!existsSync(STATE_FILE)) return;
   const saved = migrateLegacy(JSON.parse(await readFile(STATE_FILE, 'utf8')));
   state.local = saved.local;
@@ -177,33 +186,50 @@ function summarize(pr, me, repo) {
   };
 }
 
-function searchQuery({ repo, labels }) {
+function searchQuery({ name, labels }) {
   const filter = labels.length ? ` label:${labels.map((l) => JSON.stringify(l)).join(',')}` : '';
-  return `repo:${repo} is:pr is:open${filter}`;
+  return `repo:${name} is:pr is:open${filter}`;
+}
+
+async function fetchRepo(repo) {
+  const raw = await run('gh', ['api', 'graphql', '-f', `query=${PR_QUERY}`, '-f', `q=${searchQuery(repo)}`]);
+  return JSON.parse(raw).data.search.nodes.map((pr) => summarize(pr, state.me, repo.name));
 }
 
 async function refresh() {
-  const { repo } = settings;
+  const current = ++generation;
   try {
     if (!state.me) state.me = (await run('gh', ['api', 'user', '-q', '.login'])).trim();
-    const raw = await run('gh', ['api', 'graphql', '-f', `query=${PR_QUERY}`, '-f', `q=${searchQuery(settings)}`]);
-    if (repo !== settings.repo) return;
-    const nodes = JSON.parse(raw).data.search.nodes;
-    state.prs = Object.fromEntries(nodes.map((pr) => [pr.number, summarize(pr, state.me, repo)]));
-    state.fetchedAt = new Date().toISOString();
-    state.error = null;
-    dropStaleJobs();
-    if (settings.autoBrief) {
-      for (const pr of Object.values(state.prs)) if (!pr.isDraft && !pr.isMine) enqueue(pr.number, 'brief');
-    }
   } catch (e) {
-    state.error = e.message;
-    console.error('[refresh]', e.message);
+    state.errors = { gh: e.message };
+    return;
+  }
+  const results = await Promise.allSettled(settings.repos.map(fetchRepo));
+  if (current !== generation) return;
+
+  const prs = {};
+  const errors = {};
+  results.forEach((result, i) => {
+    const { name } = settings.repos[i];
+    if (result.status === 'fulfilled') {
+      for (const pr of result.value) prs[pr.key] = pr;
+    } else {
+      errors[name] = result.reason.message;
+      for (const pr of Object.values(state.prs)) if (pr.repo === name) prs[pr.key] = pr;
+      console.error(`[refresh ${name}]`, result.reason.message);
+    }
+  });
+  state.prs = prs;
+  state.errors = errors;
+  state.fetchedAt = new Date().toISOString();
+  dropStaleJobs();
+  if (settings.autoBrief) {
+    for (const pr of Object.values(state.prs)) if (!pr.isDraft && !pr.isMine) enqueue(pr.key, 'brief');
   }
 }
 
 function dropStaleJobs() {
-  const listed = new Set(Object.values(state.prs).map((pr) => pr.key));
+  const listed = new Set(Object.keys(state.prs));
   for (let i = queue.length - 1; i >= 0; i--) {
     const { key, kind } = queue[i];
     if (listed.has(key)) continue;
@@ -219,10 +245,9 @@ function jobFor(key, kind) {
   return state.analyses[key]?.[kind];
 }
 
-function enqueue(n, kind, { force = false } = {}) {
-  const pr = state.prs[n];
+function enqueue(key, kind, { force = false } = {}) {
+  const pr = state.prs[key];
   if (!pr) return false;
-  const { key } = pr;
   const job = jobFor(key, kind);
   if (job && job.sha === pr.headSha && !force && job.status !== 'error' && job.status !== 'interrupted') return false;
   if (queue.some((j) => j.key === key && j.kind === kind) || (running?.key === key && running.kind === kind)) return false;
@@ -304,7 +329,7 @@ function view() {
     me: state.me,
     settings,
     fetchedAt: state.fetchedAt,
-    error: state.error,
+    errors: state.errors,
     queue: [running, ...queue].filter(Boolean).map(({ repo, n, kind }) => ({ repo, n, kind })),
     prs: Object.values(state.prs).map((pr) => {
       const a = state.analyses[pr.key] || {};
@@ -315,16 +340,36 @@ function view() {
 
 function validSettings(input) {
   const next = { ...settings };
-  if (input.repo !== undefined) {
-    if (typeof input.repo !== 'string' || !REPO_PATTERN.test(input.repo.trim())) throw new Error('repo must look like owner/name');
-    next.repo = input.repo.trim();
-  }
-  if (input.labels !== undefined) {
-    if (!Array.isArray(input.labels) || input.labels.some((l) => typeof l !== 'string')) throw new Error('labels must be a list of strings');
-    next.labels = [...new Set(input.labels)];
+  if (input.repos !== undefined) {
+    if (!Array.isArray(input.repos)) throw new Error('repos must be a list');
+    const seen = new Set();
+    next.repos = input.repos.map((r) => {
+      const name = typeof r?.name === 'string' ? r.name.trim() : '';
+      if (!REPO_PATTERN.test(name)) throw new Error(`invalid repo: ${name || '(empty)'}`);
+      if (seen.has(name)) throw new Error(`duplicate repo: ${name}`);
+      seen.add(name);
+      if (!Array.isArray(r.labels) || r.labels.some((l) => typeof l !== 'string')) throw new Error(`labels of ${name} must be a list of strings`);
+      return { name, labels: [...new Set(r.labels)] };
+    });
   }
   if (input.autoBrief !== undefined) next.autoBrief = !!input.autoBrief;
   return next;
+}
+
+async function listRepos({ force = false } = {}) {
+  if (!force && repoList.repos && Date.now() - repoList.at < REPO_LIST_TTL_MS) return repoList.repos;
+  if (!state.me) state.me = (await run('gh', ['api', 'user', '-q', '.login'])).trim();
+  const orgs = (await run('gh', ['org', 'list', '--limit', '100'])).split('\n').map((o) => o.trim()).filter(Boolean);
+  const owners = [...orgs, state.me];
+  const lists = await Promise.all(owners.map((owner) =>
+    run('gh', ['repo', 'list', owner, '--limit', '2000', '--no-archived', '--json', 'nameWithOwner,description,pushedAt,isPrivate'])
+      .then((out) => JSON.parse(out))
+      .catch(() => [])));
+  const repos = lists.flat()
+    .map((r) => ({ name: r.nameWithOwner, description: r.description, pushedAt: r.pushedAt, isPrivate: r.isPrivate }))
+    .sort((a, b) => (b.pushedAt || '').localeCompare(a.pushedAt || ''));
+  repoList = { at: Date.now(), repos };
+  return repos;
 }
 
 async function listLabels(repo) {
@@ -370,30 +415,29 @@ const server = createServer(async (req, res) => {
         } catch (e) {
           return send(res, 400, { error: e.message });
         }
-        const repoChanged = next.repo !== settings.repo;
         settings = next;
         await writeJson(SETTINGS_FILE, settings);
-        if (repoChanged) state.prs = {};
         await refresh();
         return send(res, 200, view());
       }
     }
-    if (req.method === 'GET' && parts[1] === 'labels') return send(res, 200, await listLabels(url.searchParams.get('repo') || settings.repo));
-    const n = Number(parts[2]);
-    if (parts[1] === 'prs' && n && state.prs[n]) {
-      const { key } = state.prs[n];
-      if (req.method === 'POST' && parts[3] === 'local') {
+    if (req.method === 'GET' && parts[1] === 'labels') return send(res, 200, await listLabels(url.searchParams.get('repo') || ''));
+    if (req.method === 'GET' && parts[1] === 'repos') return send(res, 200, await listRepos({ force: url.searchParams.has('force') }));
+    const key = parts[1] === 'prs' && parts.length >= 6 ? keyOf(`${parts[2]}/${parts[3]}`, parts[4]) : null;
+    const action = parts[5];
+    if (key && state.prs[key]) {
+      if (req.method === 'POST' && action === 'local') {
         const patch = await readBody(req);
         state.local[key] = { ...(state.local[key] || {}), ...patch };
         await saveState();
         return send(res, 200, state.local[key]);
       }
-      if (req.method === 'POST' && SKILLS[parts[3]]) {
-        const queued = enqueue(n, parts[3], { force: url.searchParams.has('force') });
+      if (req.method === 'POST' && SKILLS[action]) {
+        const queued = enqueue(key, action, { force: url.searchParams.has('force') });
         return send(res, 200, { queued });
       }
-      if (req.method === 'GET' && SKILLS[parts[3]]) {
-        const job = jobFor(key, parts[3]);
+      if (req.method === 'GET' && SKILLS[action]) {
+        const job = jobFor(key, action);
         const done = job?.status === 'done' ? job : job?.previous;
         if (!done?.file) return send(res, 404, { error: 'no analysis' });
         return send(res, 200, { sha: done.sha, finishedAt: done.finishedAt, cost: done.cost, markdown: await readFile(join(DATA, done.file), 'utf8') });

@@ -144,6 +144,16 @@
   .labels label:hover { background: var(--hover); }
   .labels .desc { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: right; }
   .check { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  .picker { display: grid; gap: 6px; }
+  .repo { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 8px; }
+  .repo-head { display: flex; align-items: center; gap: 10px; }
+  .repo-head .meta { flex: 1; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button.link { border: 0; background: none; padding: 0; text-align: left; }
+  button.link:hover { background: none; color: var(--accent); }
+  button.pick { display: flex; gap: 10px; align-items: baseline; width: 100%; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; text-align: left; background: transparent; }
+  button.pick:last-child { border-bottom: 0; }
+  .labels .err { color: var(--red); }
+  .repo-chip { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--muted); }
 
   @media (max-width: 800px) {
     main { grid-template-columns: 1fr; }
@@ -174,12 +184,16 @@ const html = htm.bind(h);
 const STATUSES = { '': 'Pas de statut', todo: 'À faire', doing: 'En cours', ok: 'OK pour moi', blocked: 'Bloqué' };
 const KIND_LABEL = { brief: 'Brief', deep: 'Deep review' };
 
+const prPath = (key) => `/api/prs/${key.replace('#', '/')}`;
+const shortRepo = (name) => name.split('/')[1];
+
 const api = {
   list: () => fetch('/api/prs').then((r) => r.json()),
   refresh: () => fetch('/api/refresh', { method: 'POST' }).then((r) => r.json()),
-  local: (n, patch) => fetch(`/api/prs/${n}/local`, { method: 'POST', body: JSON.stringify(patch) }).then((r) => r.json()),
-  launch: (n, kind, force) => fetch(`/api/prs/${n}/${kind}${force ? '?force' : ''}`, { method: 'POST' }).then((r) => r.json()),
-  analysis: (n, kind) => fetch(`/api/prs/${n}/${kind}`).then((r) => (r.ok ? r.json() : null)),
+  local: (key, patch) => fetch(`${prPath(key)}/local`, { method: 'POST', body: JSON.stringify(patch) }).then((r) => r.json()),
+  launch: (key, kind, force) => fetch(`${prPath(key)}/${kind}${force ? '?force' : ''}`, { method: 'POST' }).then((r) => r.json()),
+  analysis: (key, kind) => fetch(`${prPath(key)}/${kind}`).then((r) => (r.ok ? r.json() : null)),
+  repos: () => fetch('/api/repos').then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json()).error)))),
   labels: (repo) => fetch(`/api/labels?repo=${encodeURIComponent(repo)}`).then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json()).error)))),
   saveSettings: (settings) => fetch('/api/settings', { method: 'POST', body: JSON.stringify(settings) }).then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json()).error)))),
 };
@@ -240,12 +254,12 @@ function JobBadge({ job, kind }) {
   return html`<span class="badge ${cls}">${KIND_LABEL[kind]} ${label}</span>`;
 }
 
-function Row({ pr, selected, onSelect, showLabels }) {
+function Row({ pr, selected, onSelect, showLabels, showRepo }) {
   const briefUnread = pr.brief?.status === 'done' && pr.local.briefReadSha !== pr.brief.sha;
   return html`
-    <button class="row ${selected ? 'selected' : ''}" onClick=${() => onSelect(pr.number)}>
+    <button class="row ${selected ? 'selected' : ''}" onClick=${() => onSelect(pr.key)}>
       <div class="top">
-        <span class="num">#${pr.number}</span>
+        <span class="num">${showRepo ? `${shortRepo(pr.repo)} ` : ''}#${pr.number}</span>
         <span class="title ${isUnseen(pr) ? 'unseen' : ''}">${pr.title}</span>
       </div>
       <div class="sub">
@@ -278,11 +292,11 @@ function githubLinks(markdown, repo, sha) {
 function Analysis({ pr, kind, repo, onLaunch }) {
   const job = pr[kind];
   const [doc, setDoc] = useState(null);
-  const key = `${pr.number}-${kind}-${job?.status}-${job?.finishedAt}`;
+  const key = `${pr.key}-${kind}-${job?.status}-${job?.finishedAt}`;
 
   useEffect(() => {
     setDoc(null);
-    if (job?.status === 'done' || job?.hasPrevious) api.analysis(pr.number, kind).then(setDoc);
+    if (job?.status === 'done' || job?.hasPrevious) api.analysis(pr.key, kind).then(setDoc);
   }, [key]);
 
   const busy = job && (job.status === 'queued' || job.status === 'running');
@@ -307,20 +321,20 @@ function Analysis({ pr, kind, repo, onLaunch }) {
     </div>`;
 }
 
-function Detail({ pr, repo, onLocal, onLaunch }) {
+function Detail({ pr, onLocal, onLaunch }) {
   const [tab, setTab] = useState('brief');
   const [note, setNote] = useState(pr.local.note || '');
 
   useEffect(() => {
     setNote(pr.local.note || '');
-    if (isUnseen(pr)) onLocal(pr.number, { seenAt: new Date().toISOString() });
-  }, [pr.number]);
+    if (isUnseen(pr)) onLocal(pr.key, { seenAt: new Date().toISOString() });
+  }, [pr.key]);
 
   const briefUnread = pr.brief?.status === 'done' && pr.local.briefReadSha !== pr.brief.sha;
 
   return html`
     <div>
-      <h2><a href=${pr.url} target="_blank" rel="noopener">#${pr.number}</a> ${pr.title}</h2>
+      <h2><a href=${pr.url} target="_blank" rel="noopener">${shortRepo(pr.repo)}#${pr.number}</a> ${pr.title}</h2>
       <div class="info">
         <span>${pr.author}</span>
         <span>+${pr.size.additions} −${pr.size.deletions} · ${pr.size.files} fichiers</span>
@@ -331,37 +345,96 @@ function Detail({ pr, repo, onLocal, onLaunch }) {
       </div>
       <div class="toolbar">
         ${!pr.isDraft && !pr.isMine && html`<${ReviewBadge} pr=${pr} />`}
-        <select value=${pr.local.status || ''} onChange=${(e) => onLocal(pr.number, { status: e.target.value })}>
+        <select value=${pr.local.status || ''} onChange=${(e) => onLocal(pr.key, { status: e.target.value })}>
           ${Object.entries(STATUSES).map(([v, l]) => html`<option value=${v}>${l}</option>`)}
         </select>
-        ${briefUnread && html`<button onClick=${() => onLocal(pr.number, { briefReadSha: pr.brief.sha })}>Marquer le brief comme lu</button>`}
+        ${briefUnread && html`<button onClick=${() => onLocal(pr.key, { briefReadSha: pr.brief.sha })}>Marquer le brief comme lu</button>`}
         <a href=${`${pr.url}/files`} target="_blank" rel="noopener">Voir les fichiers sur GitHub</a>
       </div>
       <textarea class="note" placeholder="Note perso…" value=${note}
         onInput=${(e) => setNote(e.target.value)}
-        onBlur=${() => note !== (pr.local.note || '') && onLocal(pr.number, { note })}></textarea>
+        onBlur=${() => note !== (pr.local.note || '') && onLocal(pr.key, { note })}></textarea>
       <div class="tabs">
         ${['brief', 'deep'].map((k) => html`<button class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${KIND_LABEL[k]}</button>`)}
       </div>
-      <${Analysis} key=${`${pr.number}-${tab}`} pr=${pr} kind=${tab} repo=${repo} onLaunch=${(kind, force) => onLaunch(pr.number, kind, force)} />
+      <${Analysis} key=${`${pr.key}-${tab}`} pr=${pr} kind=${tab} repo=${pr.repo} onLaunch=${(kind, force) => onLaunch(pr.key, kind, force)} />
+    </div>`;
+}
+
+function LabelPicker({ repo, selected, onToggle }) {
+  const [available, setAvailable] = useState(null);
+  const [error, setError] = useState(null);
+  const [query, setQuery] = useState('');
+
+  useEffect(() => {
+    api.labels(repo).then(setAvailable).catch((e) => setError(e.message));
+  }, [repo]);
+
+  const shown = (available || []).filter((l) => l.name.toLowerCase().includes(query.toLowerCase()));
+  const sorted = [...shown.filter((l) => selected.includes(l.name)), ...shown.filter((l) => !selected.includes(l.name))];
+
+  return html`
+    <div class="picker">
+      <input type="text" placeholder="Filtrer les labels…" value=${query} onInput=${(e) => setQuery(e.target.value)} />
+      <div class="labels">
+        ${!available && !error && html`<label>Chargement des labels…</label>`}
+        ${error && html`<label class="err">${error}</label>`}
+        ${available && available.length === 0 && html`<label>Aucun label sur ce repo.</label>`}
+        ${sorted.map((l) => html`
+          <label key=${l.name}>
+            <input type="checkbox" checked=${selected.includes(l.name)} onChange=${() => onToggle(l.name)} />
+            <${Label} label=${l} />
+            <span class="desc">${l.description}</span>
+          </label>`)}
+      </div>
+    </div>`;
+}
+
+function RepoAdder({ chosen, onAdd }) {
+  const [repos, setRepos] = useState(null);
+  const [error, setError] = useState(null);
+  const [query, setQuery] = useState('');
+
+  useEffect(() => {
+    api.repos().then(setRepos).catch((e) => setError(e.message));
+  }, []);
+
+  const q = query.trim().toLowerCase();
+  const matches = (repos || [])
+    .filter((r) => !chosen.includes(r.name) && (!q || r.name.toLowerCase().includes(q) || (r.description || '').toLowerCase().includes(q)))
+    .slice(0, 30);
+  const manual = /^[\w.-]+\/[\w.-]+$/.test(query.trim()) && !chosen.includes(query.trim()) && !matches.some((r) => r.name === query.trim());
+
+  const add = (name) => {
+    onAdd(name);
+    setQuery('');
+  };
+
+  return html`
+    <div class="picker">
+      <input type="text" placeholder=${repos ? `Chercher parmi ${repos.length} repos…` : 'Chargement des repos…'} value=${query}
+        onInput=${(e) => setQuery(e.target.value)}
+        onKeyDown=${(e) => e.key === 'Enter' && (matches[0] ? add(matches[0].name) : manual && add(query.trim()))} />
+      ${error && html`<div class="notice err">${error}</div>`}
+      ${q && html`
+        <div class="labels">
+          ${manual && html`<button class="pick" onClick=${() => add(query.trim())}>Ajouter <code>${query.trim()}</code></button>`}
+          ${matches.map((r) => html`
+            <button class="pick" key=${r.name} onClick=${() => add(r.name)}>
+              <strong>${r.name}</strong>
+              <span class="desc">${r.description || ''}</span>
+            </button>`)}
+          ${repos && !manual && matches.length === 0 && html`<label>Aucun repo trouvé.</label>`}
+        </div>`}
     </div>`;
 }
 
 function Settings({ current, onClose, onSaved }) {
-  const [repo, setRepo] = useState(current.repo);
-  const [repoDraft, setRepoDraft] = useState(current.repo);
-  const [labels, setLabels] = useState(new Set(current.labels));
+  const [repos, setRepos] = useState(current.repos.map((r) => ({ ...r })));
+  const [open, setOpen] = useState(current.repos.length === 1 ? current.repos[0].name : null);
   const [autoBrief, setAutoBrief] = useState(current.autoBrief);
-  const [available, setAvailable] = useState(null);
-  const [query, setQuery] = useState('');
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setAvailable(null);
-    setError(null);
-    api.labels(repo).then(setAvailable).catch((e) => setError(e.message));
-  }, [repo]);
 
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
@@ -369,20 +442,22 @@ function Settings({ current, onClose, onSaved }) {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  const toggle = (name) => setLabels((prev) => {
-    const next = new Set(prev);
-    next.has(name) ? next.delete(name) : next.add(name);
-    return next;
-  });
-
-  const shown = (available || []).filter((l) => l.name.toLowerCase().includes(query.toLowerCase()));
-  const sorted = [...shown.filter((l) => labels.has(l.name)), ...shown.filter((l) => !labels.has(l.name))];
+  const addRepo = (name) => {
+    setRepos((prev) => [...prev, { name, labels: [] }]);
+    setOpen(name);
+  };
+  const removeRepo = (name) => setRepos((prev) => prev.filter((r) => r.name !== name));
+  const toggleLabel = (name, label) => setRepos((prev) => prev.map((r) => {
+    if (r.name !== name) return r;
+    const labels = r.labels.includes(label) ? r.labels.filter((l) => l !== label) : [...r.labels, label];
+    return { ...r, labels };
+  }));
 
   const save = async () => {
     setSaving(true);
     setError(null);
     try {
-      onSaved(await api.saveSettings({ repo, labels: [...labels], autoBrief }));
+      onSaved(await api.saveSettings({ repos, autoBrief }));
     } catch (e) {
       setError(e.message);
       setSaving(false);
@@ -394,26 +469,25 @@ function Settings({ current, onClose, onSaved }) {
       <div class="dialog" role="dialog" aria-modal="true" aria-label="Réglages">
         <h2>Réglages</h2>
         <div class="body">
-          <label class="field">
-            <span>Repo GitHub</span>
-            <input type="text" value=${repoDraft} placeholder="owner/name"
-              onInput=${(e) => setRepoDraft(e.target.value)}
-              onBlur=${() => repoDraft.trim() !== repo && setRepo(repoDraft.trim())}
-              onKeyDown=${(e) => e.key === 'Enter' && setRepo(repoDraft.trim())} />
-          </label>
           <div class="field">
-            <span>Labels suivis · ${labels.size}</span>
-            <small>Une PR est listée si elle porte au moins un de ces labels. Aucun label coché : toutes les PR ouvertes.</small>
-            <input type="text" placeholder="Filtrer les labels…" value=${query} onInput=${(e) => setQuery(e.target.value)} />
-            <div class="labels">
-              ${!available && !error && html`<label>Chargement des labels…</label>`}
-              ${sorted.map((l) => html`
-                <label key=${l.name}>
-                  <input type="checkbox" checked=${labels.has(l.name)} onChange=${() => toggle(l.name)} />
-                  <${Label} label=${l} />
-                  <span class="desc">${l.description}</span>
-                </label>`)}
-            </div>
+            <span>Repos suivis · ${repos.length}</span>
+            <small>Pour chaque repo, une PR est listée si elle porte au moins un des labels cochés. Aucun label coché : toutes les PR ouvertes du repo.</small>
+            ${repos.map((r) => html`
+              <div class="repo" key=${r.name}>
+                <div class="repo-head">
+                  <button class="link" onClick=${() => setOpen(open === r.name ? null : r.name)} aria-expanded=${open === r.name}>
+                    ${open === r.name ? '▾' : '▸'} <strong>${r.name}</strong>
+                  </button>
+                  <span class="meta">${r.labels.length ? r.labels.join(', ') : 'toutes les PR'}</span>
+                  <button onClick=${() => removeRepo(r.name)} aria-label=${`Retirer ${r.name}`}>Retirer</button>
+                </div>
+                ${open === r.name && html`<${LabelPicker} repo=${r.name} selected=${r.labels} onToggle=${(label) => toggleLabel(r.name, label)} />`}
+              </div>`)}
+          </div>
+          <div class="field">
+            <span>Ajouter un repo</span>
+            <small>Les repos de tes organisations GitHub et les tiens, visibles par <code>gh</code>.</small>
+            <${RepoAdder} chosen=${repos.map((r) => r.name)} onAdd=${addRepo} />
           </div>
           <label class="check">
             <input type="checkbox" checked=${autoBrief} onChange=${(e) => setAutoBrief(e.target.checked)} />
@@ -423,7 +497,7 @@ function Settings({ current, onClose, onSaved }) {
         </div>
         <div class="foot">
           <button onClick=${onClose}>Annuler</button>
-          <button class="primary" onClick=${save} disabled=${saving || !available}>${saving ? 'Enregistrement…' : 'Enregistrer'}</button>
+          <button class="primary" onClick=${save} disabled=${saving}>${saving ? 'Enregistrement…' : 'Enregistrer'}</button>
         </div>
       </div>
     </div>`;
@@ -438,12 +512,13 @@ const GROUPS = [
 
 function App() {
   const [data, setData] = useState(null);
-  const [selected, setSelected] = useState(() => Number(location.hash.slice(1)) || null);
+  const [selected, setSelected] = useState(() => decodeURIComponent(location.hash.slice(1)) || null);
   const [showMine, setShowMine] = useState(false);
   const [showDrafts, setShowDrafts] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [labelFilter, setLabelFilter] = useState(null);
+  const [repoFilter, setRepoFilter] = useState(null);
 
   const load = useCallback(() => api.list().then(setData).catch(() => {}), []);
 
@@ -454,21 +529,29 @@ function App() {
     return () => clearInterval(t);
   }, [data?.queue?.length]);
 
-  useEffect(() => { if (selected) history.replaceState(null, '', `#${selected}`); }, [selected]);
+  useEffect(() => { if (selected) history.replaceState(null, '', `#${encodeURIComponent(selected)}`); }, [selected]);
+
+  const followedRepos = data?.settings.repos || [];
+  const scope = repoFilter ? followedRepos.filter((r) => r.name === repoFilter) : followedRepos;
+  const followed = [...new Set(scope.flatMap((r) => r.labels))];
+  const showAllLabels = scope.some((r) => r.labels.length === 0);
+
+  useEffect(() => { if (repoFilter && !followedRepos.some((r) => r.name === repoFilter)) setRepoFilter(null); }, [followedRepos.map((r) => r.name).join()]);
+  useEffect(() => { if (labelFilter && !followed.includes(labelFilter)) setLabelFilter(null); }, [followed.join()]);
+  useEffect(() => { if (data && followedRepos.length === 0) setSettingsOpen(true); }, [!!data, followedRepos.length]);
 
   const groups = useMemo(() => {
     if (!data) return [];
     const by = {};
-    const prs = labelFilter ? data.prs.filter((pr) => pr.labels.some((l) => l.name === labelFilter)) : data.prs;
+    const prs = data.prs
+      .filter((pr) => !repoFilter || pr.repo === repoFilter)
+      .filter((pr) => !labelFilter || pr.labels.some((l) => l.name === labelFilter));
     for (const pr of prs) (by[priority(pr)] ??= []).push(pr);
     return GROUPS
       .filter(([k]) => (k !== 'mine' || showMine) && (k !== 'drafts' || showDrafts))
       .map(([k, label]) => [k, label, (by[k] || []).sort((a, b) => score(b) - score(a))])
       .filter(([, , list]) => list.length);
-  }, [data, showMine, showDrafts, labelFilter]);
-
-  const followed = data?.settings.labels || [];
-  useEffect(() => { if (labelFilter && !followed.includes(labelFilter)) setLabelFilter(null); }, [followed.join()]);
+  }, [data, showMine, showDrafts, labelFilter, repoFilter]);
 
   const onLocal = async (n, patch) => {
     await api.local(n, patch);
@@ -484,7 +567,8 @@ function App() {
     setRefreshing(false);
   };
 
-  const current = data?.prs.find((p) => p.number === selected);
+  const current = data?.prs.find((p) => p.key === selected);
+  const errors = Object.entries(data?.errors || {});
   const todoCount = groups.find(([k]) => k === 'todo')?.[2].length || 0;
 
   useEffect(() => { document.title = todoCount ? `(${todoCount}) PR Dashboard` : 'PR Dashboard'; }, [todoCount]);
@@ -492,10 +576,10 @@ function App() {
   return html`
     <div class="app">
       <header>
-        <h1>${data?.settings.repo || 'PR Dashboard'}</h1>
+        <h1>PR Dashboard</h1>
         <span class="meta">${data?.prs.length ?? '…'} ouvertes · ${todoCount} à voir · mis à jour ${ago(data?.fetchedAt)}</span>
-        ${data?.queue.length > 0 && html`<span class="queue">${data.queue.length} analyse${data.queue.length > 1 ? 's' : ''} en file (#${data.queue[0].n} ${KIND_LABEL[data.queue[0].kind].toLowerCase()} en cours)</span>`}
-        ${data?.error && html`<span class="error">${data.error}</span>`}
+        ${data?.queue.length > 0 && html`<span class="queue">${data.queue.length} analyse${data.queue.length > 1 ? 's' : ''} en file (${shortRepo(data.queue[0].repo)}#${data.queue[0].n} ${KIND_LABEL[data.queue[0].kind].toLowerCase()} en cours)</span>`}
+        ${errors.map(([repo, message]) => html`<span class="error" title=${message}>Erreur sur ${repo}</span>`)}
         <span class="spacer"></span>
         <label><input type="checkbox" checked=${showDrafts} onChange=${(e) => setShowDrafts(e.target.checked)} /> Drafts</label>
         <label><input type="checkbox" checked=${showMine} onChange=${(e) => setShowMine(e.target.checked)} /> Mes PR</label>
@@ -506,22 +590,27 @@ function App() {
         onSaved=${(next) => { setData(next); setSettingsOpen(false); }} />`}
       <main>
         <div class="list">
+          ${followedRepos.length > 1 && html`
+            <div class="filters">
+              <button class=${!repoFilter ? 'on' : ''} onClick=${() => setRepoFilter(null)}>Tous les repos</button>
+              ${followedRepos.map((r) => html`<button key=${r.name} class=${repoFilter === r.name ? 'on' : ''} onClick=${() => setRepoFilter(r.name)}>${shortRepo(r.name)}</button>`)}
+            </div>`}
           ${followed.length > 1 && html`
             <div class="filters">
               <button class=${!labelFilter ? 'on' : ''} onClick=${() => setLabelFilter(null)}>Tous les labels</button>
               ${followed.map((l) => html`<button key=${l} class=${labelFilter === l ? 'on' : ''} onClick=${() => setLabelFilter(l)}>${l}</button>`)}
             </div>`}
-          ${data && followed.length === 0 && html`<div class="filters"><span class="label">Toutes les PR ouvertes</span></div>`}
-          ${data && groups.length === 0 && html`<p class="empty" style="padding: 24px 16px">Aucune PR ouverte pour ces labels.</p>`}
+          ${data && followedRepos.length === 0 && html`<p class="empty" style="padding: 24px 16px">Aucun repo suivi. Choisis-en dans les Réglages.</p>`}
+          ${data && followedRepos.length > 0 && groups.length === 0 && html`<p class="empty" style="padding: 24px 16px">Aucune PR ouverte pour ces filtres.</p>`}
           ${groups.map(([k, label, list]) => html`
             <section class="group" key=${k}>
               <h2>${label} · ${list.length}</h2>
-              ${list.map((pr) => html`<${Row} key=${pr.number} pr=${pr} selected=${pr.number === selected} onSelect=${setSelected} showLabels=${followed.length !== 1} />`)}
+              ${list.map((pr) => html`<${Row} key=${pr.key} pr=${pr} selected=${pr.key === selected} onSelect=${setSelected} showLabels=${followed.length !== 1 || showAllLabels} showRepo=${followedRepos.length > 1 && !repoFilter} />`)}
             </section>`)}
         </div>
         <div class="detail">
           ${current
-            ? html`<${Detail} key=${current.number} pr=${current} repo=${data.settings.repo} onLocal=${onLocal} onLaunch=${onLaunch} />`
+            ? html`<${Detail} key=${current.key} pr=${current} onLocal=${onLocal} onLaunch=${onLaunch} />`
             : html`<p class="empty">${data ? 'Choisis une PR dans la liste.' : 'Chargement…'}</p>`}
         </div>
       </main>
