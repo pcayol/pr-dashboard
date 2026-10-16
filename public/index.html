@@ -74,7 +74,6 @@ try {
     display: flex; align-items: center; gap: 16px; padding: 12px 20px;
     border-bottom: 1px solid var(--line); background: var(--panel);
   }
-  header h1 { font-size: 15px; font-weight: 600; margin: 0; }
   header .meta { color: var(--muted); font-size: 13px; }
   header .spacer { flex: 1; }
   .theme { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; color: var(--muted); }
@@ -133,6 +132,14 @@ try {
   .md th, .md td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
   .md th { background: var(--hover); }
   .md li { margin: 3px 0; }
+  .md img, .md video { max-width: 100%; height: auto; border-radius: 6px; }
+  .md blockquote { margin: 12px 0; padding: 0 12px; border-left: 3px solid var(--line); color: var(--muted); }
+  .md hr { border: 0; border-top: 1px solid var(--line); margin: 20px 0; }
+  .md .task-list-item { list-style: none; }
+  .md .task-list-item input { margin: 0 6px 0 -18px; }
+  .md details { margin: 12px 0; }
+  .md summary { cursor: pointer; font-weight: 500; }
+  .description { margin-top: 16px; }
 
   .label { display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border: 1px solid var(--line); border-radius: 10px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
   .label i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
@@ -194,6 +201,14 @@ const html = htm.bind(h);
 
 const STATUSES = { '': 'Pas de statut', todo: 'À faire', doing: 'En cours', ok: 'OK pour moi', blocked: 'Bloqué' };
 const KIND_LABEL = { brief: 'Brief', deep: 'Deep review' };
+const TABS = { description: 'Description', ...KIND_LABEL };
+
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A' && /^https?:/.test(node.getAttribute('href') || '')) {
+    node.setAttribute('target', '_blank');
+    node.setAttribute('rel', 'noopener');
+  }
+});
 
 const viewQuery = ({ repo, label, state }) => new URLSearchParams(Object.entries({ repo, label, state }).filter(([, v]) => v && v !== 'open')).toString();
 const prPath = (key) => `/api/prs/${key.replace('#', '/')}`;
@@ -205,6 +220,7 @@ const api = {
   local: (key, patch) => fetch(`${prPath(key)}/local`, { method: 'POST', body: JSON.stringify(patch) }).then((r) => r.json()),
   launch: (key, kind, force) => fetch(`${prPath(key)}/${kind}${force ? '?force' : ''}`, { method: 'POST' }).then((r) => r.json()),
   analysis: (key, kind) => fetch(`${prPath(key)}/${kind}`).then((r) => (r.ok ? r.json() : null)),
+  description: (key) => fetch(`${prPath(key)}/description`).then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json()).error)))),
   repos: () => fetch('/api/repos').then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json()).error)))),
   labels: (repo) => fetch(`/api/labels?repo=${encodeURIComponent(repo)}`).then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json()).error)))),
   saveSettings: (settings) => fetch('/api/settings', { method: 'POST', body: JSON.stringify(settings) }).then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json()).error)))),
@@ -340,8 +356,23 @@ function Analysis({ pr, kind, repo, onLaunch }) {
     </div>`;
 }
 
+function Description({ pr }) {
+  const [doc, setDoc] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    setError(null);
+    api.description(pr.key).then(setDoc).catch((e) => setError(e.message));
+  }, [pr.key, pr.updatedAt]);
+
+  if (error) return html`<div class="notice err">${error}</div>`;
+  if (!doc) return html`<p class="empty">Chargement de la description…</p>`;
+  if (!doc.html.trim()) return html`<p class="empty">Pas de description sur cette PR.</p>`;
+  return html`<div class="md description" dangerouslySetInnerHTML=${{ __html: DOMPurify.sanitize(doc.html, { ADD_ATTR: ['target'] }) }}></div>`;
+}
+
 function Detail({ pr, onLocal, onLaunch }) {
-  const [tab, setTab] = useState('brief');
+  const [tab, setTab] = useState('description');
   const [note, setNote] = useState(pr.local.note || '');
 
   useEffect(() => {
@@ -375,9 +406,11 @@ function Detail({ pr, onLocal, onLaunch }) {
         onInput=${(e) => setNote(e.target.value)}
         onBlur=${() => note !== (pr.local.note || '') && onLocal(pr.key, { note })}></textarea>
       <div class="tabs">
-        ${['brief', 'deep'].map((k) => html`<button class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${KIND_LABEL[k]}</button>`)}
+        ${Object.entries(TABS).map(([k, label]) => html`<button class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${label}</button>`)}
       </div>
-      <${Analysis} key=${`${pr.key}-${tab}`} pr=${pr} kind=${tab} repo=${pr.repo} onLaunch=${(kind, force) => onLaunch(pr.key, kind, force)} />
+      ${tab === 'description'
+        ? html`<${Description} pr=${pr} />`
+        : html`<${Analysis} key=${`${pr.key}-${tab}`} pr=${pr} kind=${tab} repo=${pr.repo} onLaunch=${(kind, force) => onLaunch(pr.key, kind, force)} />`}
     </div>`;
 }
 
@@ -729,7 +762,6 @@ function App() {
   return html`
     <div class="app">
       <header>
-        <h1>PR Dashboard</h1>
         ${data && followedRepos.length > 0 && html`<${ViewBar} view=${view} setView=${setView} repos=${followedRepos} />`}
         <span class="meta">${loading ? 'Chargement…' : `${data?.prs.length ?? 0} PR · ${closed ? '' : `${todoCount} à voir · `}mis à jour ${ago(data?.fetchedAt)}`}</span>
         ${data?.queue.length > 0 && html`<span class="queue">${data.queue.length} analyse${data.queue.length > 1 ? 's' : ''} en file (${shortRepo(data.queue[0].repo)}#${data.queue[0].n} ${KIND_LABEL[data.queue[0].kind].toLowerCase()} en cours)</span>`}

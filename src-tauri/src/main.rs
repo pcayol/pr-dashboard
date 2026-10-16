@@ -61,7 +61,7 @@ fn main() {
             app.manage(Server(Mutex::new(child)));
 
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("PR Dynamization")
+                .title("PR Dashboard")
                 .inner_size(1400.0, 900.0)
                 .min_inner_size(800.0, 500.0)
                 .initialization_script("window.__PR_DASHBOARD_APP__ = true;")

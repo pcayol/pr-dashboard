@@ -57,6 +57,11 @@ const FORBIDDEN_TOOLS = ['Edit', 'NotebookEdit', 'Bash(git push:*)', 'Bash(git c
 let settings = { ...DEFAULT_SETTINGS };
 let state = { me: null, prs: {}, extra: {}, local: {}, analyses: {}, fetchedAt: null, errors: {} };
 const viewCache = new Map();
+const descriptionCache = new Map();
+const DESCRIPTION_TTL_MS = 2 * 60 * 1000;
+const DESCRIPTION_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) { bodyHTML updatedAt } }
+}`;
 const VIEW_TTL_MS = 60 * 1000;
 let generation = 0;
 let repoList = { at: 0, repos: null };
@@ -234,6 +239,17 @@ async function viewPrs({ repo, label, prState }, { force = false } = {}) {
   const entry = { at: Date.now(), fetchedAt: new Date().toISOString(), prs, errors };
   if (Object.keys(errors).length === 0) viewCache.set(cacheKey, entry);
   return entry;
+}
+
+async function fetchDescription(pr) {
+  const cached = descriptionCache.get(pr.key);
+  if (cached && Date.now() - cached.at < DESCRIPTION_TTL_MS) return cached.value;
+  const [owner, name] = pr.repo.split('/');
+  const raw = await run('gh', ['api', 'graphql', '-f', `query=${DESCRIPTION_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${pr.number}`]);
+  const { bodyHTML, updatedAt } = JSON.parse(raw).data.repository.pullRequest;
+  const value = { html: bodyHTML, updatedAt };
+  descriptionCache.set(pr.key, { at: Date.now(), value });
+  return value;
 }
 
 async function refresh() {
@@ -476,6 +492,7 @@ const server = createServer(async (req, res) => {
     const key = parts[1] === 'prs' && parts.length >= 6 ? keyOf(`${parts[2]}/${parts[3]}`, parts[4]) : null;
     const action = parts[5];
     if (key && findPr(key)) {
+      if (req.method === 'GET' && action === 'description') return send(res, 200, await fetchDescription(findPr(key)));
       if (req.method === 'POST' && action === 'local') {
         const patch = await readBody(req);
         state.local[key] = { ...(state.local[key] || {}), ...patch };
